@@ -1906,3 +1906,42 @@ automation:
           unit: 1
           address: 15904
           value: 1
+
+  - id: "vsr300_filter_replacement_notification"
+    alias: VSR300 Filter Replacement Notification
+    description: "Send notification when VSR300 filter needs replacement"
+    trigger:
+      # Trigger when filter time is low (less than 5 days) or negative
+      - platform: numeric_state
+        entity_id: sensor.vsr300_time_to_filter_replacement_s
+        below: 432000 # 5 days in seconds
+    condition:
+      # Prevent repeated notifications
+      - condition: template
+        value_template: "{{ states('sensor.vsr300_time_to_filter_replacement_s')|int > 0 }}"
+    action:
+      - service: persistent_notification.create
+        data:
+          title: "VSR300 Filter Replacement Required Soon"
+          message: >-
+            The VSR300 ventilation unit filter will need replacement soon. 
+            Time remaining: {{ states('sensor.vsr300_time_to_filter_change_months') }}
+          notification_id: vsr300_filter_reminder
+
+  - id: "vsr300_filter_needs_replacement_now"
+    alias: VSR300 Filter Needs Replacement Now
+    description: "Send notification when VSR300 filter needs immediate replacement"
+    trigger:
+      # Trigger when filter time reaches zero or below
+      - platform: numeric_state
+        entity_id: sensor.vsr300_time_to_filter_replacement_s
+        below: 1
+    action:
+      - service: persistent_notification.create
+        data:
+          title: "VSR300 FILTER REPLACEMENT REQUIRED!"
+          message: >-
+            The VSR300 ventilation unit filter needs to be replaced immediately!
+            
+            After replacing the filter, press the "Reset Filter Timer" button in the VSR300 control panel.
+          notification_id: vsr300_filter_replacement_required
