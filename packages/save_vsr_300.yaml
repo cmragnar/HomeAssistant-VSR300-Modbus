@@ -1623,6 +1623,42 @@ script:
       service: input_boolean.turn_off
       entity_id: input_boolean.vsr300_holiday_mode_status_dummy
 
+  vsr300_send_notification:
+    alias: "Send VSR300 Notification"
+    description: "Send both persistent and phone notifications for VSR300 events"
+    fields:
+      title:
+        description: "Notification title"
+        example: "VSR300 Alert"
+      message:
+        description: "Notification message"
+        example: "This is an alert message"
+      notification_id:
+        description: "ID for persistent notification"
+        example: "vsr300_alert"
+      priority:
+        description: "Notification priority (normal/high/critical)"
+        example: "high"
+        default: "normal"
+    sequence:
+      # Persistent notification
+      - service: persistent_notification.create
+        data:
+          title: "{{ title }}"
+          message: "{{ message }}"
+          notification_id: "{{ notification_id }}"
+
+      # Phone notification
+      - service: notify.all_devices
+        data:
+          title: "{{ title }}"
+          message: "{{ message }}"
+          data:
+            channel: "vsr300_alerts"
+            importance: "{{ priority }}"
+            ttl: 0
+            sticky: true
+            tag: "{{ notification_id }}"
 ################################################################################
 # Automation
 ################################################################################
@@ -1892,9 +1928,9 @@ automation:
           address: 7000
           value: "{{ states.input_number.vsr300_filter_replacement_period_months_sp.state | int }}"
 
-  - id: "vsr300_clear_all_alarms_button"
-    alias: vsr300 Clear All Alarms Button
-    description: "Clear all VSR300 alarms when button is pressed"
+  - id: "vsr300_clear_all_alarms"
+    alias: vsr300 Clear All Alarms
+    description: "Clear all VSR300 alarms"
     trigger:
       - platform: state
         entity_id: input_button.vsr300_clear_all_alarms
@@ -1906,3 +1942,142 @@ automation:
           unit: 1
           address: 15904
           value: 1
+
+  - id: "vsr300_one_automation_notification"
+    alias: VSR300 Status Monitor and Notification
+    description: "Monitor VSR300 system and send appropriate notifications"
+    mode: queued
+    trigger:
+      # Filter replacement triggers
+      - platform: numeric_state
+        entity_id: sensor.vsr300_time_to_filter_replacement_s
+        below: 432000  # 5 days in seconds
+        id: "filter_soon"
+      - platform: numeric_state
+        entity_id: sensor.vsr300_time_to_filter_replacement_s
+        below: 1
+        id: "filter_now"
+      
+      # Alarm triggers - using individual alarm sensors
+      - platform: state
+        entity_id: sensor.vsr300_a_alarm
+        to: "1"
+        id: "type_a_alarm_on"
+      - platform: state
+        entity_id: sensor.vsr300_b_alarm
+        to: "1"
+        id: "type_b_alarm_on"
+      - platform: state
+        entity_id: sensor.vsr300_c_alarm
+        to: "1"
+        id: "type_c_alarm_on"
+      
+      # Alarm cleared triggers
+      - platform: state
+        entity_id: sensor.vsr300_a_alarm
+        from: "1"
+        to: "0"
+        id: "type_a_alarm_off"
+      - platform: state
+        entity_id: sensor.vsr300_b_alarm
+        from: "1"
+        to: "0"
+        id: "type_b_alarm_off"
+      - platform: state
+        entity_id: sensor.vsr300_c_alarm
+        from: "1"
+        to: "0"
+        id: "type_c_alarm_off"
+    action:
+      - choose:
+          # Filter soon
+          - conditions:
+              - condition: trigger
+                id: "filter_soon"
+              - condition: template
+                value_template: "{{ states('sensor.vsr300_time_to_filter_replacement_s')|int(0) > 0 }}"
+            sequence:
+              - service: script.vsr300_send_notification
+                data:
+                  title: "VSR300 Filter Replacement Required Soon"
+                  message: >-
+                    The VSR300 ventilation unit filter will need replacement soon. 
+                    Time remaining: {{ states('sensor.vsr300_time_to_filter_change_months') }}
+                  notification_id: vsr300_filter_reminder
+                  priority: high
+          
+          # Filter now
+          - conditions:
+              - condition: trigger
+                id: "filter_now"
+            sequence:
+              - service: script.vsr300_send_notification
+                data:
+                  title: "VSR300 FILTER REPLACEMENT REQUIRED!"
+                  message: >-
+                    The VSR300 ventilation unit filter needs to be replaced immediately!
+                    
+                    After replacing the filter, press the "Reset Filter Timer" button in the VSR300 control panel.
+                  notification_id: vsr300_filter_replacement_required
+                  priority: critical
+          
+          # Any alarm activated
+          - conditions:
+              - condition: or
+                conditions:
+                  - condition: trigger
+                    id: "type_a_alarm_on"
+                  - condition: trigger
+                    id: "type_b_alarm_on"
+                  - condition: trigger
+                    id: "type_c_alarm_on"
+            sequence:
+              - service: script.vsr300_send_notification
+                data:
+                  title: "VSR300 Alarm Activated"
+                  message: >-
+                    The VSR300 has active alarms!
+                    
+                    {% if is_state('sensor.vsr300_a_alarm', 'unavailable') %}
+                      Type A: Unknown
+                    {% else %}
+                      Type A: {{ 'Yes' if states('sensor.vsr300_a_alarm')|int(0) == 1 else 'No' }}
+                    {% endif %}
+                    
+                    {% if is_state('sensor.vsr300_b_alarm', 'unavailable') %}
+                      Type B: Unknown
+                    {% else %}
+                      Type B: {{ 'Yes' if states('sensor.vsr300_b_alarm')|int(0) == 1 else 'No' }}
+                    {% endif %}
+                    
+                    {% if is_state('sensor.vsr300_c_alarm', 'unavailable') %}
+                      Type C: Unknown
+                    {% else %}
+                      Type C: {{ 'Yes' if states('sensor.vsr300_c_alarm')|int(0) == 1 else 'No' }}
+                    {% endif %}
+                  notification_id: vsr300_alarm
+                  priority: high
+          
+          # All alarms cleared
+          - conditions:
+              - condition: or
+                conditions:
+                  - condition: trigger
+                    id: "type_a_alarm_off"
+                  - condition: trigger
+                    id: "type_b_alarm_off"
+                  - condition: trigger
+                    id: "type_c_alarm_off"
+              - condition: template
+                value_template: "{{ states('sensor.vsr300_a_alarm')|int(0) == 0 and states('sensor.vsr300_b_alarm')|int(0) == 0 and states('sensor.vsr300_c_alarm')|int(0) == 0 }}"
+            sequence:
+              - service: script.vsr300_send_notification
+                data:
+                  title: "VSR300 Alarms Cleared"
+                  message: "All alarms on the VSR300 ventilation unit have been cleared."
+                  notification_id: vsr300_alarm_cleared
+                  priority: normal
+              - service: persistent_notification.dismiss
+                data:
+                  notification_id: vsr300_alarm
+        default: []
