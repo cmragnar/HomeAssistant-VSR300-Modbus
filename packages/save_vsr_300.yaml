@@ -1207,6 +1207,14 @@ switch:
         state_off: 0
 
 ################################################################################
+# INPUT BUTTON
+################################################################################
+input_button:
+  vsr300_clear_all_alarms:
+    name: "Clear All VSR300 Alarms"
+    icon: mdi:alert-remove
+
+################################################################################
 # Script
 ################################################################################
 script:
@@ -1841,3 +1849,18 @@ automation:
           unit: 1
           address: 7000
           value: "{{ states.input_number.vsr300_filter_replacement_period_months_sp.state | int }}"
+
+  - id: "vsr300_clear_all_alarms_button"
+    alias: vsr300 Clear All Alarms Button
+    description: "Clear all VSR300 alarms when button is pressed"
+    trigger:
+      - platform: state
+        entity_id: input_button.vsr300_clear_all_alarms
+    condition: []
+    action:
+      - service: modbus.write_register
+        data_template:
+          hub: VSR300
+          unit: 1
+          address: 15904
+          value: 1
